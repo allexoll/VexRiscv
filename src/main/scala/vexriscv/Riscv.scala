@@ -235,6 +235,19 @@ object Riscv{
     def UINSTRET  = 0xC02 // UR Machine instructions-retired counter.
     def UINSTRETH = 0xC82 // UR Upper 32 bits of minstret, RV32I only.
 
+    // debug registers
+    val DCSR = 0x7B0
+    val DPC = 0x7B1
+    val DSCRATCH0 = 0x7b2
+    val DSCRATCH1 = 0x7b3
+
+    // Trigger registers
+    val TSELECT   = 0x7A0
+    val TDATA1    = 0x7A1
+    val TDATA2    = 0x7A2
+    val TINFO     = 0x7a4
+    val TCONTROL  = 0x7A5
+
     val FFLAGS = 0x1
     val FRM = 0x2
     val FCSR = 0x3

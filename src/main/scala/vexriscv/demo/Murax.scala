@@ -15,6 +15,8 @@ import vexriscv.plugin._
 import vexriscv.{VexRiscv, VexRiscvConfig, plugin}
 import spinal.lib.com.spi.ddr._
 import spinal.lib.bus.simple._
+import vexriscv.plugin.riscvdebug.{CoreDMPlugin, DM}
+
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.Seq
 
@@ -226,7 +228,8 @@ case class Murax(config : MuraxConfig) extends Component{
     //Instanciate the CPU
     val cpu = new VexRiscv(
       config = VexRiscvConfig(
-        plugins = cpuPlugins += new DebugPlugin(debugClockDomain, hardwareBreakpointCount)
+        //plugins = cpuPlugins += new DebugPlugin(debugClockDomain, hardwareBreakpointCount)
+        plugins = cpuPlugins += new CoreDMPlugin(debugClockDomain)
       )
     )
 
@@ -253,6 +256,15 @@ case class Murax(config : MuraxConfig) extends Component{
         resetCtrl.systemReset setWhen(RegNext(plugin.io.resetOut))
         io.jtag <> plugin.io.bus.fromJtag()
       }
+      case plugin : CoreDMPlugin         => plugin.debugClockDomain{
+        resetCtrl.systemReset setWhen(RegNext(plugin.io.resetOut))
+
+        val dm = new DM(config_progbufsize = 2, cpuCount = 1)
+        dm.io.debug(0) <> plugin.io
+
+        io.jtag <> dm.io.dmi.fromJtag()
+      }
+
       case _ =>
     }
 
