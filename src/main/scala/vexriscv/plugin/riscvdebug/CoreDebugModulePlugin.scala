@@ -10,7 +10,7 @@ import vexriscv.plugin.{CsrInterface, CsrMapping, IContextSwitching, IWake, Plug
 import scala.collection.mutable.ArrayBuffer
 
 
-case class CoreDMIo() extends Bundle with IMasterSlave {
+case class CoreDebugModuleIo() extends Bundle with IMasterSlave {
 
   val injectionPort = Stream(Bits(32 bit))
   val resetRequest = Bool()
@@ -41,9 +41,9 @@ case class CoreDMIo() extends Bundle with IMasterSlave {
 }
 
 
-class CoreDMPlugin(var debugClockDomain: ClockDomain) extends Plugin[VexRiscv] {
+class CoreDebugModulePlugin(var debugClockDomain: ClockDomain) extends Plugin[VexRiscv] {
 
-  var io: CoreDMIo = null
+  var io: CoreDebugModuleIo = null
 
   val injectionAsks = ArrayBuffer[(Stage, Bool)]()
   var injectionPort: Stream[Bits] = null
@@ -61,7 +61,7 @@ class CoreDMPlugin(var debugClockDomain: ClockDomain) extends Plugin[VexRiscv] {
     import Riscv._
     import pipeline.config._
 
-    io = slave(CoreDMIo()).setName("CoreDMIo")
+    io = slave(CoreDebugModuleIo()).setName("CodeDebugModuleIo")
 
     step = Reg(Bool) init False
     ebreakm = Reg(Bool) init False

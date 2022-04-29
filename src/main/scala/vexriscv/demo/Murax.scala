@@ -5,7 +5,7 @@ import spinal.lib._
 import spinal.lib.bus.amba3.apb._
 import spinal.lib.bus.misc.SizeMapping
 import spinal.lib.bus.simple.PipelinedMemoryBus
-import spinal.lib.com.jtag.Jtag
+import spinal.lib.com.jtag.{Jtag, JtagTapInstructionCtrl}
 import spinal.lib.com.spi.ddr.SpiXdrMaster
 import spinal.lib.com.uart._
 import spinal.lib.io.{InOutWrapper, TriStateArray}
@@ -15,7 +15,7 @@ import vexriscv.plugin._
 import vexriscv.{VexRiscv, VexRiscvConfig, plugin}
 import spinal.lib.com.spi.ddr._
 import spinal.lib.bus.simple._
-import vexriscv.plugin.riscvdebug.{CoreDMPlugin, DM}
+import vexriscv.plugin.riscvdebug.{CoreDebugModulePlugin, DebugModule, DebugTransportModuleParameter, DebugTransportModuleTunneled}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.Seq
@@ -167,8 +167,8 @@ case class Murax(config : MuraxConfig) extends Component{
     val jtag = slave(Jtag())
 
     //Peripherals IO
-    val gpioA = master(TriStateArray(gpioWidth bits))
-    val uart = master(Uart())
+    //val gpioA = master(TriStateArray(gpioWidth bits))
+    //val uart = master(Uart())
 
     val xip = ifGen(genXip)(master(SpiXdrMaster(xipConfig.ctrl.spi)))
   }
@@ -229,7 +229,7 @@ case class Murax(config : MuraxConfig) extends Component{
     val cpu = new VexRiscv(
       config = VexRiscvConfig(
         //plugins = cpuPlugins += new DebugPlugin(debugClockDomain, hardwareBreakpointCount)
-        plugins = cpuPlugins += new CoreDMPlugin(debugClockDomain)
+        plugins = cpuPlugins += new CoreDebugModulePlugin(debugClockDomain)
       )
     )
 
@@ -254,15 +254,22 @@ case class Murax(config : MuraxConfig) extends Component{
       }
       case plugin : DebugPlugin         => plugin.debugClockDomain{
         resetCtrl.systemReset setWhen(RegNext(plugin.io.resetOut))
-        io.jtag <> plugin.io.bus.fromJtag()
+        //io.jtag <> plugin.io.bus.fromJtag()
+
       }
-      case plugin : CoreDMPlugin         => plugin.debugClockDomain{
+      case plugin : CoreDebugModulePlugin         => plugin.debugClockDomain{
         resetCtrl.systemReset setWhen(RegNext(plugin.io.resetOut))
 
-        val dm = new DM(config_progbufsize = 2, cpuCount = 1)
+        val dm = new DebugModule(config_progbufsize = 2, cpuCount = 1)
         dm.io.debug(0) <> plugin.io
+        io.jtag <> dm.fromJtag()
+        //io.jtag <> dm.fromTunneledJtagTroughJtag()
+        //dm.fromBscane2()
 
-        io.jtag <> dm.io.dmi.fromJtag()
+
+
+        //io.jtag <> dm.io.dmi.fromJtag()
+        //dm.io.dmi.fromTunneledBSCAN() //.fromBscane2()
       }
 
       case _ =>
@@ -294,14 +301,14 @@ case class Murax(config : MuraxConfig) extends Component{
 
     //******** APB peripherals *********
     val apbMapping = ArrayBuffer[(Apb3, SizeMapping)]()
-    val gpioACtrl = Apb3Gpio(gpioWidth = gpioWidth, withReadSync = true)
-    io.gpioA <> gpioACtrl.io.gpio
-    apbMapping += gpioACtrl.io.apb -> (0x00000, 4 kB)
+    //val gpioACtrl = Apb3Gpio(gpioWidth = gpioWidth, withReadSync = true)
+    //io.gpioA <> gpioACtrl.io.gpio
+    //apbMapping += gpioACtrl.io.apb -> (0x00000, 4 kB)
 
-    val uartCtrl = Apb3UartCtrl(uartCtrlConfig)
-    uartCtrl.io.uart <> io.uart
-    externalInterrupt setWhen(uartCtrl.io.interrupt)
-    apbMapping += uartCtrl.io.apb  -> (0x10000, 4 kB)
+    //val uartCtrl = Apb3UartCtrl(uartCtrlConfig)
+    //uartCtrl.io.uart <> io.uart
+    //externalInterrupt setWhen(uartCtrl.io.interrupt)
+    //apbMapping += uartCtrl.io.apb  -> (0x10000, 4 kB)
 
     val timer = new MuraxApb3Timer()
     timerInterrupt setWhen(timer.io.interrupt)
@@ -402,18 +409,18 @@ object Murax_iCE40_hx8k_breakout_board_xip{
     mainClkBuffer.USER_SIGNAL_TO_GLOBAL_BUFFER <> io.mainClk
     mainClkBuffer.GLOBAL_BUFFER_OUTPUT <> murax.io.mainClk
 
-    val jtagClkBuffer = SB_GB()
-    jtagClkBuffer.USER_SIGNAL_TO_GLOBAL_BUFFER <> io.jtag_tck
-    jtagClkBuffer.GLOBAL_BUFFER_OUTPUT <> murax.io.jtag.tck
+    //val jtagClkBuffer = SB_GB()
+    //jtagClkBuffer.USER_SIGNAL_TO_GLOBAL_BUFFER <> io.jtag_tck
+    //jtagClkBuffer.GLOBAL_BUFFER_OUTPUT <> murax.io.jtag.tck
 
-    io.led <> murax.io.gpioA.write(7 downto 0)
+    //io.led <> murax.io.gpioA.write(7 downto 0)
 
-    murax.io.jtag.tdi <> io.jtag_tdi
-    murax.io.jtag.tdo <> io.jtag_tdo
-    murax.io.jtag.tms <> io.jtag_tms
-    murax.io.gpioA.read <> 0
-    murax.io.uart.txd <> io.uart_txd
-    murax.io.uart.rxd <> io.uart_rxd
+    //murax.io.jtag.tdi <> io.jtag_tdi
+    //murax.io.jtag.tdo <> io.jtag_tdo
+    //murax.io.jtag.tms <> io.jtag_tms
+    //murax.io.gpioA.read <> 0
+    //murax.io.uart.txd <> io.uart_txd
+    //murax.io.uart.rxd <> io.uart_rxd
 
 
 
@@ -492,7 +499,8 @@ object MuraxWithRamInit{
 
 object Murax_arty{
   def main(args: Array[String]) {
-    val hex = "src/main/c/murax/hello_world/build/hello_world.hex"
+    //val hex = "src/main/c/murax/hello_world/build/hello_world.hex"
+    val hex = null
     SpinalVerilog(Murax(MuraxConfig.default(false).copy(coreFrequency = 100 MHz,onChipRamSize = 32 kB, onChipRamHexFile = hex)))
   }
 }

@@ -2,7 +2,10 @@ package vexriscv.plugin.riscvdebug
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.com.jtag.{Jtag}
+import spinal.lib.bus.misc.{BusSlaveFactoryDelayed, BusSlaveFactoryElement, SingleMapping}
+import spinal.lib.com.jtag.{Jtag, JtagTap, JtagTapFunctions, JtagTapInstructionCtrl}
+
+import scala.collection.Seq
 
 /* Debug modules are slaves to a bus called the debug module inteface (DMI) the master of the bus is the debug transport
  module(s). the debug module interface can be a trivial bus with one master and one slave.
@@ -12,72 +15,115 @@ used for the first DM extra space can be used for custom debug devices, other...
 The debug module is controlled via register accesses to its DMI address space
 
 */
-case class DMI_req(abits: Int) extends Bundle{
-  val address = Bits(abits bit)    //< requested address
-  val data = Bits(32 bits)  //< requested data
-  val op = Bits(2 bits)     //< same meaning as `op` field
-}
-case class DMI_rsp() extends Bundle{
-  val data = Bits(32 bits)  //< response data
-  val op = Bits(2 bits)     //< same meaning as `op` field
-}
-case class DMI(abits: Int) extends Bundle with IMasterSlave {
 
-  val req = Stream(DMI_req(abits)) //< DTM to DM
-  val rsp = Stream(DMI_rsp()) //< DM to DTM
 
-  override def asMaster(): Unit = {
+object DMIUpdateOp extends SpinalEnum(binarySequential){
+  val NOP, READ, WRITE, RESERVED = newElement()
+}
+
+object DMICaptureOp extends SpinalEnum(binarySequential){
+  val SUCCESS, RESERVED, FAILED, OVERRUN = newElement()
+}
+
+case class DMIUpdate(addressWidth : Int) extends Bundle{
+  val op = DMIUpdateOp()
+  val data = Bits(32 bits)
+  val address = UInt(addressWidth bits)
+}
+
+case class DMICapture(addressWidth : Int) extends Bundle{
+  val op = DMICaptureOp()
+  val data = Bits(32 bits)
+  val padding = UInt(addressWidth bits)
+}
+
+case class DMIReq(addressWidth : Int) extends Bundle{
+  val write = Bool()
+  val data = Bits(32 bits)
+  val address = UInt(addressWidth bits)
+}
+
+case class DMIRsp() extends Bundle{
+  val error = Bool()
+  val data = Bits(32 bits)
+}
+
+
+case class DMI(addressWidth : Int) extends Bundle with IMasterSlave {
+  val req = Stream(DMIReq(addressWidth))
+  val rsp = Flow(DMIRsp())
+
+  override def asMaster() = {
     master(req)
     slave(rsp)
   }
-
-
-  /**
-   * connects the DMI bus to a Jtag port trough a Jtag DTM
-   * @return jtag port
-   */
-  def fromJtag(): Jtag = {
-    // arguments from DTM jtag defined in riscv-debug-stable
-    val dtm = new JtagDTM(abits)(5, 1, 0x10, 0x11)
-    this <> dtm.io.dmi
-    dtm.io.jtag
-  }
-
-  /**
-   * connects the DMI bus to 3 BSCANE2 primitives (USER1/2/3)
-   * can be used with remapping IR codes:
-   * `riscv set_ir idcode 3`
-   * `riscv set_ir dtmcs 4`
-   * `riscv set_ir dmi 34`
-   * Check the BDSL file of your part to get the IR codes for USERx BSCAN
-   */
-  def fromBscane2() {
-  val dtm = new BscaneDTM(abits)
-  this <> dtm.io.dmi
-  }
-
-  /**
-   * connects the DMI bus to a remaped JTAG DTM.
-   * remaps the IR codes, with ir_len = 6
-   * @param idcodeIR
-   * @param dtmcsIR
-   * @param dmiIR
-   * @return jtag interface
-   */
-  def fromRemappedJtag(idcodeIR: Int = 2, dtmcsIR: Int = 3, dmiIR:Int = 34): Jtag = {
-    val dtm = new JtagDTM(abits)(6, idcodeIR, dtmcsIR, dmiIR)
-    this <> dtm.io.dmi
-    dtm.io.jtag
-  }
-
-  /**
-   *  creates a JTAG trough BSCAN USER4 tunnel.
-   *  paired with `riscv use_bscan_tunnel` in openocd, it allows to use the on-chip
-   *  bscan prmitive to to create a "virtual" jtag interface.
-   */
-  def fromTunneledBSCAN() {
-    val tunnel = new Bscane2JtagTunnel()
-    val jtag = this.fromJtag()
-    tunnel.io.jtag <> jtag
-  }
 }
+
+
+object DMISlaveFactory {
+  def apply(bus: DMI) = new DMISlaveFactory(bus)
+}
+
+class DMISlaveFactory(bus: DMI) extends BusSlaveFactoryDelayed{
+  bus.req.ready := True
+
+  val reqToRsp = Flow(DMIRsp())
+  val rspBuffer = reqToRsp.stage()
+
+  val askWrite = (bus.req.valid && bus.req.write).allowPruning()
+  val askRead  = (bus.req.valid && !bus.req.write).allowPruning()
+  val doWrite  = (askWrite && bus.req.ready).allowPruning()
+  val doRead   = (askRead && bus.req.ready).allowPruning()
+  //  val forceError = False
+
+  //  def error() = forceError := True
+
+  bus.rsp.valid := rspBuffer.valid
+  bus.rsp.payload  := rspBuffer.payload
+
+  reqToRsp.valid := bus.req.fire
+  reqToRsp.error := True
+  reqToRsp.data := 0
+
+  override def readAddress() : UInt = bus.req.address
+  override def writeAddress() : UInt = bus.req.address
+
+  override def readHalt(): Unit = bus.req.ready := False
+  override def writeHalt(): Unit = bus.req.ready := False
+
+  override def build(): Unit = {
+    super.doNonStopWrite(bus.req.data)
+
+    def doMappedElements(jobs : Seq[BusSlaveFactoryElement]) = super.doMappedElements(
+      jobs = jobs,
+      askWrite = askWrite,
+      askRead = askRead,
+      doWrite = doWrite,
+      doRead = doRead,
+      writeData = bus.req.data,
+      readData = reqToRsp.data
+    )
+
+    switch(bus.req.address) {
+      for ((address, jobs) <- elementsPerAddress if address.isInstanceOf[SingleMapping]) {
+        is(address.asInstanceOf[SingleMapping].address) {
+          reqToRsp.error := False
+          doMappedElements(jobs)
+        }
+      }
+    }
+
+    for ((address, jobs) <- elementsPerAddress if !address.isInstanceOf[SingleMapping]) {
+      when(address.hit(bus.req.address)){
+        reqToRsp.error := False
+        doMappedElements(jobs)
+      }
+    }
+
+    //    cmdToRsp.error setWhen(forceError)
+  }
+
+  override def busDataWidth: Int = 32
+  override def wordAddressInc: Int = 1
+}
+

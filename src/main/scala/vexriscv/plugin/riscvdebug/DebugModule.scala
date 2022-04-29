@@ -4,7 +4,7 @@ import spinal.core.Component.push
 import spinal.core._
 import spinal.core.internals.Operator
 import spinal.lib._
-import spinal.lib.com.jtag.{Jtag, JtagTap}
+import spinal.lib.com.jtag.{Jtag, JtagTap, JtagTapInstructionCtrl}
 import spinal.lib.cpu.riscv.impl.Utils.CSR
 import spinal.lib.fsm._
 import spinal.lib.system.debugger
@@ -32,10 +32,10 @@ case class HartDMStatus() extends Bundle{
     val HART_running = Bool()
 }
 
-class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
+class DebugModule(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
     val io = new Bundle{
         val dmi = slave(DMI(7))
-        val debug = Vec(master(CoreDMIo()), cpuCount)
+        val debug = Vec(master(CoreDebugModuleIo()), cpuCount)
         val platformReset = out(Bool())
     }
 
@@ -55,7 +55,7 @@ class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
     val pipelineWaitCycles = 3
     val startExec = Bool()
     startExec := False
-    val selfprogbuf = Vec(Reg(Bits(32 bits)), config_progbufsize)
+    val selfprogbuf = Vec(Reg(Bits(32 bits)), 2)
     val selfExec = Bool()   // no bool because immediate (no clock delay)
     selfExec := False
     val progbufExec = Reg(Bool()) init False       // registered because should be delay when doing selfExec -> bufExec
@@ -317,8 +317,11 @@ class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
         }
     }
 
+
+
+
     // abstractauto @ 0x18
-    val abstractauto = new Area{
+    val abstractauto = new Area {
         val registerAddress = DMRegisters.abstractauto
         val autoexecdata = Bits(1 bit)
         bus.drive(autoexecdata, registerAddress) init B"0"
@@ -331,6 +334,12 @@ class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
         for(off <- 0 until config_progbufsize) {
             bus.readAndWrite(progbuf0(off), registerAddress + off)
         }
+    }
+    // sbcs @ 0x38
+    val sbcs = new Area{
+        val registerAddress = DMRegisters.sbcs
+        val sbversion  = bus.read(U(1, 3 bits), registerAddress, 29)
+        val sbaccess   = bus.read(U(2, 3 bits), registerAddress, 17)
     }
 
 
@@ -433,7 +442,7 @@ class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
                     }
                 }
                 val instr = Bits(32 bit)
-                instr := selfprogbuf(instrCnt)
+                instr := selfprogbuf(instrCnt.value(0).asUInt)
 
                 io.debug(dmcontrol.hartsel).injectionPort.payload := instr
                 io.debug(dmcontrol.hartsel).injectionPort.valid := True
@@ -506,4 +515,55 @@ class DM(config_progbufsize:Int = 2, cpuCount: Int = 1) extends Component{
         def sbcs        = 0x38  // System Bus Access Control and Status
     }
 
+    /**
+     * Connect the Debug Module to a Jtag interface
+     * @return Jtag port
+     */
+    def fromJtag(): Jtag = {
+        val dtm = new DebugTransportModuleJtagTap(
+            p = DebugTransportModuleParameter(
+                addressWidth = 7,
+                version      = 1,
+                idle         = 7),
+            debugCd = this.clockDomain
+        )
+        io.dmi <> dtm.io.bus
+        dtm.io.jtag
+    }
+
+    /**
+     * Connect the debugModule to a tunnelled JTAG trough JTAG.
+     * Usefull for debugging the tunnel.
+     * @return Jtag Port
+     */
+    def fromTunneledJtagTroughJtag(): Jtag = {
+        val dtm = new DebugTransportModuleJtagTapWithTunnel(
+            p = DebugTransportModuleParameter(
+                addressWidth = 7,
+                version = 1,
+                idle = 7),
+            debugCd = this.clockDomain
+            )
+        io.dmi <> dtm.io.bus
+        dtm.io.jtag
+    }
+
+    /**
+     * Connect the Debug Module to a Tunnelled Jtag, after a bscane2
+     * primitive (Xilinx's jtag tap instruction access)
+     */
+    def fromBscane2(): Unit ={
+        val instruction = JtagTapInstructionCtrl()
+        val bscan = instruction.fromXilinxBscane2(4)
+        val jtagCd = ClockDomain(bscan.TCK)
+        val dtm = new DebugTransportModuleTunneled(p = DebugTransportModuleParameter(
+            addressWidth = 7,
+            version      = 1,
+            idle         = 7),
+            jtagCd,
+            this.clockDomain
+        )
+        io.dmi <> dtm.io.bus
+        dtm.io.instruction <> instruction
+    }
 }

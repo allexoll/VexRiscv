@@ -22,7 +22,7 @@ object MuraxSim {
 //    def config = MuraxConfig.default.copy(onChipRamSize = 256 kB)
     def config = MuraxConfig.default(withXip = false).copy(onChipRamSize = 4 kB, onChipRamHexFile = "src/main/ressource/hex/muraxDemo.hex")
     val simSlowDown = false
-    SimConfig.allOptimisation.compile(new Murax(config)).doSimUntilVoid{dut =>
+    SimConfig.allOptimisation.withFstWave.compile(new Murax(config)).doSimUntilVoid{dut =>
       val mainClkPeriod = (1e12/dut.config.coreFrequency.toDouble).toLong
       val jtagClkPeriod = mainClkPeriod*4
       val uartBaudRate = 115200
@@ -36,7 +36,7 @@ object MuraxSim {
         jtag = dut.io.jtag,
         jtagClkPeriod = jtagClkPeriod
       )
-
+      /*
       val uartTx = UartDecoder(
         uartPin = dut.io.uart.txd,
         baudPeriod = uartBaudPeriod
@@ -45,7 +45,7 @@ object MuraxSim {
       val uartRx = UartEncoder(
         uartPin = dut.io.uart.rxd,
         baudPeriod = uartBaudPeriod
-      )
+      )*/
 
       if(config.xipConfig != null)dut.io.xip.data(1).read #= 0
 
@@ -99,8 +99,8 @@ object MuraxSim {
             }
           }
 
-          dut.io.gpioA.read #= (dut.io.gpioA.write.toLong & dut.io.gpioA.writeEnable.toLong) | (switchValue() << 8)
-          ledsValue = dut.io.gpioA.write.toLong
+          //dut.io.gpioA.read #= (dut.io.gpioA.write.toLong & dut.io.gpioA.writeEnable.toLong) | (switchValue() << 8)
+          //ledsValue = dut.io.gpioA.write.toLong
           ledsFrame.repaint()
           if(simSlowDown) Thread.sleep(400)
         }
